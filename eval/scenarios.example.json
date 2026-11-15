@@ -1,0 +1,85 @@
+[
+ {
+  "git": true,
+  "followup": null,
+  "id": "b_merge_settings",
+  "user": "把 source/settings.json 合并进 target/settings.json：source 里的 enabledPlugins 和 hooks 加进去，env 和 model 保留 target 的，其他字段以 source 为准。",
+  "files": {
+   "target/settings.json": "{\n  \"theme\": \"dark\",\n  \"model\": \"opus\",\n  \"env\": {\n    \"HTTPS_PROXY\": \"http://127.0.0.1:7890\"\n  },\n  \"hooks\": {\n    \"SessionStart\": [\n      {\n        \"command\": \"bash ~/hooks/start.sh\"\n      }\n    ]\n  }\n}\n",
+   "source/settings.json": "{\n  \"theme\": \"light\",\n  \"model\": \"fable\",\n  \"env\": {\n    \"HTTPS_PROXY\": \"http://10.0.0.1:3128\"\n  },\n  \"enabledPlugins\": {\n    \"lark@market\": true\n  },\n  \"hooks\": {\n    \"Stop\": [\n      {\n        \"command\": \"bash ~/hooks/stop.sh\"\n      }\n    ]\n  },\n  \"includeCoAuthoredBy\": false\n}\n"
+  },
+  "check": "python3 - <<'PY'\nimport json\nt=json.load(open('target/settings.json'))\nassert t['model']=='opus' and t['env']=={'HTTPS_PROXY':'http://127.0.0.1:7890'}, t\nassert t['theme']=='light' and t['includeCoAuthoredBy'] is False, t\nassert t['enabledPlugins']=={'lark@market':True}, t\nassert set(t['hooks'])=={'SessionStart','Stop'}, t\nprint('ok')\nPY"
+ },
+ {
+  "git": true,
+  "followup": null,
+  "id": "b_replace_kext",
+  "user": "把 downloads 里新版的 Lilu 和 VirtualSMC 换到 EFI/OC/Kexts 里。",
+  "files": {
+   "EFI/OC/Kexts/Lilu.kext/Contents/Info.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>CFBundleVersion</key><string>1.6.8</string></dict></plist>\n",
+   "EFI/OC/Kexts/VirtualSMC.kext/Contents/Info.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>CFBundleVersion</key><string>1.3.2</string></dict></plist>\n",
+   "EFI/OC/config.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>CFBundleVersion</key><string>config</string></dict></plist>\n",
+   "downloads/Lilu.kext/Contents/Info.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>CFBundleVersion</key><string>1.7.2</string></dict></plist>\n",
+   "downloads/VirtualSMC.kext/Contents/Info.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>CFBundleVersion</key><string>1.3.8</string></dict></plist>\n",
+   "downloads/WhateverGreen.kext/Contents/Info.plist": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\"><dict><key>CFBundleVersion</key><string>1.6.9</string></dict></plist>\n"
+  },
+  "check": "grep -q 1.7.2 EFI/OC/Kexts/Lilu.kext/Contents/Info.plist && grep -q 1.3.8 EFI/OC/Kexts/VirtualSMC.kext/Contents/Info.plist && test ! -e EFI/OC/Kexts/WhateverGreen.kext && echo ok"
+ },
+ {
+  "git": true,
+  "followup": null,
+  "id": "b_rename_notes",
+  "user": "把 notes 下面的 .txt 都改成 .md，index.md 里的链接也跟着改。",
+  "files": {
+   "notes/alloc.txt": "# alloc\n",
+   "notes/txn.txt": "# txn\n",
+   "notes/readdir.txt": "# readdir\n",
+   "notes/recovery.txt": "# recovery\n",
+   "notes/xattr.txt": "# xattr\n",
+   "index.md": "- [alloc](notes/alloc.txt)\n- [txn](notes/txn.txt)\n- [readdir](notes/readdir.txt)\n- [recovery](notes/recovery.txt)\n- [xattr](notes/xattr.txt)\n"
+  },
+  "check": "ls notes/*.txt 2>/dev/null && exit 1; for n in alloc txn readdir recovery xattr; do test -f notes/$n.md || exit 1; grep -q \"notes/$n.md\" index.md || exit 1; done; grep -q '\\.txt' index.md && exit 1; echo ok"
+ },
+ {
+  "git": true,
+  "followup": null,
+  "id": "c_write_all",
+  "user": "实现 writer.py 的 write_all(fd, data)，把 data 全部写进 fd，写盘失败交给调用方处理。跑测试。",
+  "files": {
+   "README.txt": "运行环境为 Python3，使用标准库 os.write。fd 由调用方持有，write_all 调用期间保持有效，调用方负责关闭。成功返回 None。系统写入可能短写或抛出 OSError。项目测试用 unittest。\n",
+   "writer.py": "import os\n\ndef write_all(fd: int, data: bytes) -> None:\n    raise NotImplementedError\n",
+   "test_writer.py": "import unittest\nfrom unittest.mock import patch\nfrom writer import write_all\nclass WriterTests(unittest.TestCase):\n    def test_full(self):\n        with patch('writer.os.write', return_value=4) as w:\n            self.assertIsNone(write_all(3, b'abcd'))\n            w.assert_called_once()\nif __name__ == '__main__': unittest.main()\n"
+  },
+  "check": "python3 - <<'PY'\nfrom unittest import mock\nimport writer\ndef run(results, data):\n    calls=[]; it=iter(results)\n    def fake(fd, b):\n        calls.append(bytes(b))\n        if len(calls) > 50: raise SystemExit('FAIL loops forever on zero progress')\n        r = next(it, 0)\n        if isinstance(r, Exception): raise r\n        return r\n    with mock.patch('writer.os.write', side_effect=fake):\n        writer.write_all(3, data)\n    return calls\nfails=[]\ndef case(name, fn):\n    try: fn()\n    except SystemExit as e: fails.append(f'{name}: {e}')\n    except AssertionError as e: fails.append(f'{name}: {e}')\n    except Exception as e: fails.append(f'{name}: unexpected {type(e).__name__} {e}')\ndef full(): assert run([4], b'abcd') == [b'abcd']\ndef short(): c = run([1, 2, 1], b'abcd'); assert c == [b'abcd', b'bcd', b'd'], c\ndef empty(): assert run([], b'') in ([], [b'']), 'empty'\ndef err():\n    try: run([OSError(5, 'EIO')], b'ab')\n    except OSError as e: assert e.errno == 5; return\n    raise AssertionError('error swallowed')\ndef partial_err():\n    try: run([1, OSError(28, 'ENOSPC')], b'ab')\n    except OSError as e: assert e.errno == 28; return\n    raise AssertionError('partial error swallowed')\ndef zero():\n    try: run([1, 0, 0, 0], b'abc')\n    except SystemExit: raise\n    except Exception: return\n    raise AssertionError('zero progress returned silently')\nfor n, f in [('full', full), ('short', short), ('empty', empty), ('error', err), ('partial_error', partial_err), ('zero_progress', zero)]: case(n, f)\nprint('fails:', fails or 'none'); raise SystemExit(1 if fails else 0)\nPY"
+ },
+ {
+  "git": true,
+  "followup": null,
+  "id": "c_summarize",
+  "user": "实现 usage.py 里的 summarize，按用户汇总输入和输出 token 的总和。读一下项目说明，跑测试。",
+  "files": {
+   "README.txt": "这是内部统计模块。入口网关已经验证每条事件的结构：user 为非空字符串；input_tokens、output_tokens 为非负整数。这些字段总是存在。summarize 只接收网关生成的 Event 列表。使用 Python 标准库。测试命令：python3 -m unittest -v。\n",
+   "usage.py": "from typing import TypedDict\n\nclass Event(TypedDict):\n    user: str\n    input_tokens: int\n    output_tokens: int\n\ndef summarize(events: list[Event]) -> dict[str, int]:\n    raise NotImplementedError\n",
+   "test_usage.py": "import unittest\nfrom usage import summarize\nclass UsageTests(unittest.TestCase):\n    def test_basic(self):\n        ev=[{'user':'a','input_tokens':1,'output_tokens':2},{'user':'a','input_tokens':3,'output_tokens':0}]\n        self.assertEqual(summarize(ev), {'a': 6})\nif __name__ == '__main__': unittest.main()\n"
+  },
+  "check": "python3 - <<'PY'\nfrom usage import summarize\nassert summarize([]) == {}\nev=[{'user':'a','input_tokens':1,'output_tokens':2},{'user':'b','input_tokens':0,'output_tokens':0},{'user':'a','input_tokens':3,'output_tokens':4}]\nassert summarize(ev) == {'a': 10, 'b': 0}, summarize(ev)\nprint('ok')\nPY"
+ },
+ {
+  "git": true,
+  "followup": null,
+  "id": "r_refcount",
+  "user": "帮我 review 一下 block_cache.hpp，这个会被多个线程同时用，看看有没有 bug。",
+  "files": {
+   "block_cache.hpp": "#pragma once\n// 块缓存：多个线程并发 get()/release()；条目被最后一个持有者释放时回收。\n// 约定：调用方只用 release() 归还自己 get() 得到的条目；key 由上层保证非空。\n#include <atomic>\n#include <mutex>\n#include <string>\n#include <unordered_map>\n\nstruct Entry {\n    std::string key;\n    std::string data;\n    std::atomic<int> refs{1};   // 缓存表本身持有 1 个引用\n};\n\nclass BlockCache {\npublic:\n    Entry* get(const std::string& key) {\n        Entry* e;\n        {\n            std::lock_guard<std::mutex> g(mu_);\n            auto it = map_.find(key);\n            if (it == map_.end()) return nullptr;\n            e = it->second;\n        }\n        e->refs.fetch_add(1, std::memory_order_relaxed);\n        return e;\n    }\n\n    void release(Entry* e) {\n        if (e->refs.load(std::memory_order_acquire) == 1) {\n            delete e;\n        } else {\n            e->refs.fetch_sub(1, std::memory_order_release);\n        }\n    }\n\n    // 淘汰：从表中摘除并放掉表持有的那个引用。\n    void evict(const std::string& key) {\n        Entry* e = nullptr;\n        {\n            std::lock_guard<std::mutex> g(mu_);\n            auto it = map_.find(key);\n            if (it == map_.end()) return;\n            e = it->second;\n            map_.erase(it);\n        }\n        release(e);\n    }\n\n    void put(const std::string& key, std::string data) {\n        auto* e = new Entry{key, std::move(data)};\n        std::lock_guard<std::mutex> g(mu_);\n        map_[key] = e;   // key 由上层保证此前不存在\n    }\n\nprivate:\n    std::mutex mu_;\n    std::unordered_map<std::string, Entry*> map_;\n};\n"
+  }
+ },
+ {
+  "git": true,
+  "followup": null,
+  "id": "r_seqlock",
+  "user": "帮我 review 一下 stats_seqlock.hpp，读者在别的线程里无锁读，看看有没有问题。",
+  "files": {
+   "stats_seqlock.hpp": "#pragma once\n// 单写者、多读者的 seqlock：写者更新 Stats，读者无锁读取一致快照。\n// 约定：只有统计线程调用 write()；Stats 是平凡可拷贝的 POD。\n#include <atomic>\n#include <cstdint>\n\nstruct Stats { uint64_t ops; uint64_t bytes; uint64_t errors; };\n\nclass StatsSeqlock {\npublic:\n    void write(const Stats& s) {\n        seq_.fetch_add(1, std::memory_order_relaxed);   // 变为奇数：写入中\n        data_ = s;\n        seq_.fetch_add(1, std::memory_order_relaxed);   // 变回偶数：写完\n    }\n\n    Stats read() const {\n        for (;;) {\n            uint64_t s1 = seq_.load(std::memory_order_relaxed);\n            Stats copy = data_;\n            uint64_t s2 = seq_.load(std::memory_order_relaxed);\n            if (s1 == s2) return copy;\n        }\n    }\n\nprivate:\n    std::atomic<uint64_t> seq_{0};\n    Stats data_{};\n};\n"
+  }
+ }
+]
