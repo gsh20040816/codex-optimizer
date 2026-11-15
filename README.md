@@ -77,3 +77,7 @@ python3 analysis/extract_actions.py > actions.jsonl  # 执行过的命令、写�
 ```
 
 `extract_turns.py` 按模型分组（Claude 模型 / Claude Code 里接的其他模型 / Codex），把 Claude 那组的 `final` 存成 JSON 列表，就能直接给 `score_style.py --baseline` 用。
+
+## 许可
+
+[MIT](LICENSE)
