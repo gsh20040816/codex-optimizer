@@ -19,6 +19,7 @@ codex debug prompt-input | python3 -c "import sys; print('和用户一起把事�
 - **判断和质疑**：第一句回答用户问的事；拿不准时先说最可能的情况，不确定只说一次，并说成下一步怎么查；被问"你确定吗"时去查决定结论的那一环，查完再说，不因为被追问就改口。
 - **说话方式**：不替用户设想一个推论再去否认（"这不代表……""不能直接当成……"）；讲事情本身，不讲依据强弱和判断变没变；用口语词（用、所以、现在、还没、跑、删掉……）；粗体只用在行首标签上；结尾落在下一步或交给用户决定，不复述结论，不加"未修改/未提交"这类声明。
 - **一轮什么时候结束**：事情做完、要用户拍板或授权、剩下的活全卡在只有用户能给的信息上、或者确实卡住时才结束；不写一句“接下来先查……”就停。gpt-6-astra 在用户回答了它的问题之后特别容易这样停，不装提示词也一样。
+- **写进文件的文字**：README、分析文档、报告、清单、注释、提交信息也照同样的规矩写。功能写它做什么，读者会因此用错时才写那一条"不会……"；范围写覆盖了什么、还缺什么，不写"不能视作材料已齐"；没做完的写成待办，放进它影响的那一节，不在文末另起"注意事项""局限性"。
 - **过程消息**：从刚看到的东西说起，再接下一步，不写"我先核对 X，确认是 A 还是 B，避免……"这种调查计划。
 - **动手操作**：用操作本身的结果确认成功；不给文件算哈希、不逐个回读比对、不给 git 里或能重新生成的东西做备份；代码里不包 try/except 吞错，不为想象中的输入加检查。
 - **评审**：覆盖面不打折，并发与内存序、锁和生命周期、错误路径、部分完成、边界条件照常查到底；上面的"少加检查"只针对自己写的代码和操作。
@@ -37,6 +38,17 @@ codex debug prompt-input | python3 -c "import sys; print('和用户一起把事�
 
 评审能力没有因此下降：5 道真实项目里的并发和时序评审（只读克隆到当时评审的提交，用原评审提示词、max 强度重跑，每题 2 次），装上提示词的 10 次都找到了当年评审发现的问题，不装的漏了 3 次。样本小，能说明的是没有变差。
 
+写进文件的文字要单独管。只有回复规则时，Codex 写的 README、清单照样满是"不会……""不能视作……已齐""以……为准"：装着上一版提示词写出的几份真实产物，以否定开头的分句每千字 9.8 个，Claude 自己写的 93 篇文档是 5.0 个。加上文档那一段后，4 个写文档场景各跑 3 次（每千字，口语词对除外）：
+
+| | 不装 | 只有回复规则 | 加上文档规则 | Claude 写的文档 |
+|---|---|---|---|---|
+| 以否定开头的分句（不切换账号、不自动踢设备……） | 7.8 | 7.1 | 2.7 | 5.0 |
+| 拦截句（不能据此/不代表/不等于……） | 2.8 | 1.0 | 0.2 | 0.2 |
+| 书面虚词（尚、均、仍、即、相关……） | 6.8 | 3.7 | 2.5 | 3.9 |
+| 口语词对占比 | 27% | 69% | 80% | 63% |
+
+少掉的是没人会那样以为的否定；删文件工具的 README 里"跳过名字不匹配的文件""删掉的不会回滚"这类读者必须知道的照样在，报销清单也照样写明交通票缺失、没计入合计。
+
 已知做不到的：联网回答的出处没法集中放到末尾，Codex 联网工具的定义要求引用紧贴论断，`AGENTS.md` 盖不过。
 
 ## 测试工具
@@ -52,13 +64,16 @@ python3 eval/score_behavior.py default,agents --dump runs/behavior.txt
 
 # 回复风格指标；--baseline 可以给一份参考回复（见下面的语料分析）
 python3 eval/score_style.py default,agents --baseline claude.json --dump runs/style.txt
+
+# 写出的文档的风格指标：每次运行新建或改过的 .md/.html/.txt
+python3 eval/score_style.py default,agents --docs --prefix d_ --baseline claude_docs.json --dump runs/docs.txt
 ```
 
-[`eval/scenarios.example.json`](eval/scenarios.example.json) 里是 7 个合成场景：在 git 仓库里合并配置、替换文件、批量改名（看有没有多余的备份、哈希、回读），两道写代码题（隐藏测试检查短写、零进展、错误传播等），两段埋了并发 bug 的 C++ 代码（看评审能不能找到）。场景字段：
+[`eval/scenarios.example.json`](eval/scenarios.example.json) 里是 11 个合成场景：在 git 仓库里合并配置、替换文件、批量改名（看有没有多余的备份、哈希、回读），两道写代码题（隐藏测试检查短写、零进展、错误传播等），两段埋了并发 bug 的 C++ 代码（看评审能不能找到），四个写文档的任务（给删备份的脚本写 README、把一轮压测写成组会用的分析、整理缺了交通票的报销清单、给 README 补一节新功能）。场景字段：
 
 | 字段 | 含义 |
 |---|---|
-| `id`, `user` | 必填；`id` 前缀 `b_`/`c_`/`r_` 决定 `score_behavior.py` 的分类 |
+| `id`, `user` | 必填；`id` 前缀 `b_`/`c_`/`r_` 决定 `score_behavior.py` 的分类，写文档的场景用 `d_` |
 | `followup` | 第二轮用户消息，用 `codex exec resume --last` 发出，适合测"你确定吗？" |
 | `cwd` | 在已有目录里跑（只读沙箱），比如真实仓库的只读克隆；不填则新建空目录 |
 | `files`, `git`, `check` | 在新目录里放夹具文件（可提交成 git 仓库），跑完执行 `check` 判结果 |
@@ -72,12 +87,16 @@ python3 eval/score_style.py default,agents --baseline claude.json --dump runs/st
 从本机记录里抽取对话和操作，用来找你自己用过的两种模型之间的差异：
 
 ```sh
-python3 analysis/extract_turns.py > turns.jsonl      # 每轮：用户原话、助手最终回复、用到的工具、模型
+python3 analysis/extract_turns.py > turns.jsonl      # 每轮：用户原话、助手最终回复、用到的工具、模型、写出的文档
 python3 analysis/extract_actions.py > actions.jsonl  # 执行过的命令、写入的代码
 # 记录不在默认位置时：--claude-dir DIR（可重复）、--codex-dir DIR
 ```
 
-`extract_turns.py` 按模型分组（Claude 模型 / Claude Code 里接的其他模型 / Codex），把 Claude 那组的 `final` 存成 JSON 列表，就能直接给 `score_style.py --baseline` 用。
+`extract_turns.py` 按模型分组（Claude 模型 / Claude Code 里接的其他模型 / Codex），把 Claude 那组的 `final` 存成 JSON 列表，就能直接给 `score_style.py --baseline` 用。`docs` 是这一轮在 Claude Code 里用 Write 写出的 .md/.html 全文（跳过 memory 和 CLAUDE.md/AGENTS.md），文档模式的基线这样做：
+
+```sh
+jq -s '[.[] | select(.group=="claude") | .docs[]]' turns.jsonl > claude_docs.json
+```
 
 ## 许可
 

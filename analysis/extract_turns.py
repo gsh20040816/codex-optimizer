@@ -3,10 +3,11 @@
     python3 analysis/extract_turns.py > turns.jsonl
     python3 analysis/extract_turns.py --claude-dir ~/.claude/projects --claude-dir /other/config/projects
 
-Each record: group, model, session, cwd, ts, user, final, tools.
+Each record: group, model, session, cwd, ts, user, final, tools, docs.
   group: claude (Claude models in Claude Code), cc-gpt (non-Claude models served through Claude Code),
          codex (interactive Codex sessions; `codex exec` runs are skipped unless --include-exec)
   final: the last text the assistant wrote in that turn; tools: tool names used in the turn
+  docs: full text of the .md/.html files the turn wrote with Write (Claude Code only; memory and prompt files skipped)
 Only typed human messages start a turn. Copies of the same session in several directories are merged.
 """
 import argparse
@@ -56,7 +57,7 @@ def claude_file(path):
                 continue
             emit(r)
             r = {"group": "claude", "model": None, "session": o.get("sessionId"), "cwd": o.get("cwd"),
-                 "ts": o.get("timestamp"), "user": t, "final": "", "tools": set()}
+                 "ts": o.get("timestamp"), "user": t, "final": "", "tools": set(), "docs": []}
         elif o.get("type") == "assistant" and r is not None:
             m = o.get("message") or {}
             model = m.get("model") or ""
@@ -68,6 +69,10 @@ def claude_file(path):
                     r["final"] = b["text"].strip()
                 elif b.get("type") == "tool_use":
                     r["tools"].add(b.get("name"))
+                    path = (b.get("input") or {}).get("file_path", "")
+                    if b.get("name") == "Write" and path.endswith((".md", ".html")) and "/memory/" not in path \
+                            and os.path.basename(path) not in ("CLAUDE.md", "AGENTS.md"):
+                        r["docs"].append(b["input"].get("content", ""))
     emit(r)
 
 
@@ -97,7 +102,7 @@ def codex_file(path, include_exec):
         if p.get("role") == "user" and t and not t.startswith(("<", "# AGENTS")):
             emit(r)
             r = {"group": "codex", "model": None, "session": sid, "cwd": cwd, "ts": o.get("timestamp"),
-                 "user": t, "final": "", "tools": set()}
+                 "user": t, "final": "", "tools": set(), "docs": []}
         elif p.get("role") == "assistant" and r is not None and t and p.get("phase") in (None, "final_answer"):
             r["final"] = t
     emit(r)

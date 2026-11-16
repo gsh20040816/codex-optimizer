@@ -34,6 +34,7 @@ CFG = tomllib.loads((USER_HOME / "config.toml").read_text())
 PROVIDER_ID = CFG.get("model_provider")
 PROVIDER = dict(CFG.get("model_providers", {}).get(PROVIDER_ID, {})) if PROVIDER_ID else {}
 TOKEN = PROVIDER.pop("experimental_bearer_token", None)
+DOC_SUFFIXES = (".md", ".html", ".txt", ".rst")
 
 
 def toml_value(v):
@@ -143,6 +144,14 @@ def run(arm, prompt_text, sc, rep, out):
         res["new_files"] = sorted(after - before)
         res["final_files"] = {rel: (Path(cwd) / rel).read_text(errors="replace")[:4000] for rel in sorted(after)
                               if (Path(cwd) / rel).is_file() and rel.endswith((".py", ".json", ".md", ".hpp", ".plist", ".txt"))}
+        # full text of every document the run created or changed, for score_style.py --docs
+        res["written"] = {}
+        for rel in sorted(after):
+            p = Path(cwd) / rel
+            if p.is_file() and rel.endswith(DOC_SUFFIXES):
+                text = p.read_text(errors="replace")
+                if text != files.get(rel):
+                    res["written"][rel] = text
     if sc.get("check"):
         c = subprocess.run(["bash", "-c", sc["check"]], cwd=cwd, text=True, capture_output=True, timeout=120)
         res["check"] = {"rc": c.returncode, "out": (c.stdout + c.stderr)[-1500:]}
