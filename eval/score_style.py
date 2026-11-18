@@ -1,12 +1,16 @@
-"""Style metrics of final replies, per arm, optionally next to a reference corpus.
+"""Style metrics of final replies, or of the documents the runs wrote, per arm, optionally next to a reference corpus.
 
     python3 eval/score_style.py default,agents
     python3 eval/score_style.py default,agents --baseline claude_turns.jsonl --dump runs/view.txt
+    python3 eval/score_style.py default,agents --docs --prefix d_ --baseline claude_docs.json
 
 --baseline takes a JSON list of strings, or JSONL with a "final" field (e.g. analysis/extract_turns.py output
 filtered to the model you want to imitate). Densities are per 1,000 characters, rates are % of replies.
+--docs scores the .md/.html/.txt files each run created or changed instead of the replies; HTML tags and fenced
+code are stripped, and every count is per 1,000 Chinese characters, since one long document hits any pattern.
 """
 import argparse
+import html
 import json
 import re
 from collections import defaultdict
@@ -17,6 +21,8 @@ DENSITY = {
     "讲证据/判断状态": r"依据|证据|实测|验证|确认|核实|判断|结论|说明",
     "书面虚词": r"截至|尚|均|仍|即|此次|该(?!怎|不|是)|相关|对应",
     "口语词": r"还|都|就|得|吧|挺|有点",
+    # a clause that opens with a negation: "不切换账号、不自动踢设备", "未当作已发生的有效队数"
+    "否定分句": r"(?:^|[，。；：、\n（(])\s*(?:也|都|并|仍|还|就|均|则)?(?:不(?!同|少|多|仅|但|过|然|论|管|久|断)|未|没有?|无需|并非|非)",
 }
 RATE = {
     "拦截句": r"不能(直接|据此|只|说|视为|当成|当作|认为|算|把|完全|保证|证明|确定|确认|判断)|不代表|不意味|不等于|并不是|并非|准确(地)?说|严格(来)?说|更准确|目前只能|只能说",
@@ -49,10 +55,21 @@ def ending(t):
     return "other"
 
 
-def metrics(texts):
-    n, chars = max(1, len(texts)), max(1, sum(map(len, texts)))
-    m = {k: sum(len(re.findall(p, t)) for t in texts) / chars * 1000 for k, p in DENSITY.items()}
-    m |= {k: 100 * sum(bool(re.search(p, t)) for t in texts) / n for k, p in RATE.items()}
+def plain(text):
+    if re.search(r"<(html|body|p|div|table)\b", text):
+        text = re.sub(r"(?s)<(script|style)[^>]*>.*?</\1>", "", text)
+        text = html.unescape(re.sub(r"<[^>]+>", "\n", text))
+    return re.sub(r"(?s)```.*?```", "", text)
+
+
+def metrics(texts, docs=False):
+    n = max(1, len(texts))
+    chars = max(1, sum(len(re.findall(r"[\u4e00-\u9fff]", t)) if docs else len(t) for t in texts))
+    m = {k + "/1k": sum(len(re.findall(p, t)) for t in texts) / chars * 1000 for k, p in DENSITY.items()}
+    if docs:
+        m |= {k + "/1k": sum(len(re.findall(p, t)) for t in texts) / chars * 1000 for k, p in RATE.items()}
+    else:
+        m |= {k + "%": 100 * sum(bool(re.search(p, t)) for t in texts) / n for k, p in RATE.items()}
     a = sum(len(re.findall(p, t)) for t in texts for p, _ in PAIRS)
     b = sum(len(re.findall(q, t)) for t in texts for _, q in PAIRS)
     m["口语词对占比%"] = 100 * a / max(1, a + b)
@@ -79,7 +96,8 @@ def main():
     ap.add_argument("--runs", default=str(REPO / "runs"))
     ap.add_argument("--prefix", default="", help="only scenario ids starting with this")
     ap.add_argument("--baseline")
-    ap.add_argument("--dump", help="write all replies side by side to this file")
+    ap.add_argument("--docs", action="store_true", help="score the documents the runs wrote instead of the replies")
+    ap.add_argument("--dump", help="write all replies (or documents) side by side to this file")
     a = ap.parse_args()
     arms = a.arms.split(",")
     data = defaultdict(lambda: defaultdict(list))
@@ -87,21 +105,27 @@ def main():
         r = json.loads(f.read_text())
         if r.get("rc") == 0 and r["arm"] in arms and r["id"].startswith(a.prefix):
             data[r["arm"]][r["id"]].append(r)
+    texts = (lambda r: [plain(t) for t in r.get("written", {}).values()]) if a.docs else \
+        (lambda r: [t["final"] or "" for t in r["turns"]])
     groups = {"baseline": load_baseline(a.baseline)} if a.baseline else {}
-    groups |= {arm: [t["final"] or "" for rs in data[arm].values() for r in rs for t in r["turns"]] for arm in arms}
-    ms = {g: metrics(v) for g, v in groups.items()}
+    if a.docs and a.baseline:
+        groups["baseline"] = [plain(t) for t in groups["baseline"]]
+    groups |= {arm: [t for rs in data[arm].values() for r in rs for t in texts(r)] for arm in arms}
+    ms = {g: metrics(v, a.docs) for g, v in groups.items()}
     keys = list(next(iter(ms.values())))
     print(f"{'':20s}" + "".join(f"{g:>12s}" for g in groups))
-    print(f"{'回复数':20s}" + "".join(f"{len(v):>12d}" for v in groups.values()))
+    print(f"{'文档数' if a.docs else '回复数':20s}" + "".join(f"{len(v):>12d}" for v in groups.values()))
     for k in keys:
-        unit = "/1k" if k in DENSITY else ("%" if k in RATE else "")
-        print(f"{k + unit:20s}" + "".join(f"{ms[g][k]:>12.1f}" for g in groups))
+        print(f"{k:20s}" + "".join(f"{ms[g][k]:>12.1f}" for g in groups))
     if a.dump:
         with open(a.dump, "w") as fh:
             for sid in sorted({i for arm in arms for i in data[arm]}):
                 fh.write(f"\n\n######## {sid}\n")
                 for arm in arms:
                     for r in data[arm][sid]:
+                        if a.docs:
+                            fh.writelines(f"\n--- {arm} #{r['rep']} {rel}\n{t}\n" for rel, t in r.get("written", {}).items())
+                            continue
                         for ti, t in enumerate(r["turns"]):
                             fh.write(f"\n--- {arm} #{r['rep']}{' (follow-up)' if ti else ''}\nU: {t['user'][:300]}\n")
                             fh.writelines(f"[progress] {c}\n" for c in t["commentary"])

@@ -81,5 +81,57 @@
   "files": {
    "stats_seqlock.hpp": "#pragma once\n// 单写者、多读者的 seqlock：写者更新 Stats，读者无锁读取一致快照。\n// 约定：只有统计线程调用 write()；Stats 是平凡可拷贝的 POD。\n#include <atomic>\n#include <cstdint>\n\nstruct Stats { uint64_t ops; uint64_t bytes; uint64_t errors; };\n\nclass StatsSeqlock {\npublic:\n    void write(const Stats& s) {\n        seq_.fetch_add(1, std::memory_order_relaxed);   // 变为奇数：写入中\n        data_ = s;\n        seq_.fetch_add(1, std::memory_order_relaxed);   // 变回偶数：写完\n    }\n\n    Stats read() const {\n        for (;;) {\n            uint64_t s1 = seq_.load(std::memory_order_relaxed);\n            Stats copy = data_;\n            uint64_t s2 = seq_.load(std::memory_order_relaxed);\n            if (s1 == s2) return copy;\n        }\n    }\n\nprivate:\n    std::atomic<uint64_t> seq_{0};\n    Stats data_{};\n};\n"
   }
+ },
+ {
+  "id": "d_readme_rotate",
+  "user": "给 rotate.py 写一份 README.md，组里同事要拿它去清理 /srv/backup 里每天的数据库备份。",
+  "files": {
+   "rotate.py": "\"\"\"Keep daily, weekly and monthly snapshots in a backup directory and delete the rest.\"\"\"\nimport argparse\nimport re\nimport sys\nfrom datetime import date\nfrom pathlib import Path\n\nNAME = re.compile(r\"^(?P<prefix>.+)-(?P<day>\\d{4}-\\d{2}-\\d{2})\\.tar\\.zst$\")\n\n\ndef snapshots(directory):\n    groups = {}\n    for p in directory.iterdir():\n        m = NAME.match(p.name)\n        if m and p.is_file():\n            groups.setdefault(m[\"prefix\"], []).append((date.fromisoformat(m[\"day\"]), p))\n    return groups\n\n\ndef kept_days(days, daily, weekly, monthly):\n    days = sorted(days, reverse=True)\n    kept = set(days[:daily])\n    weeks, months = [], []\n    for d in days:  # newest first, so each week/month keeps its newest snapshot\n        week = d.isocalendar()[:2]\n        if len(weeks) < weekly and week not in weeks:\n            weeks.append(week)\n            kept.add(d)\n        month = (d.year, d.month)\n        if len(months) < monthly and month not in months:\n            months.append(month)\n            kept.add(d)\n    return kept\n\n\ndef main():\n    ap = argparse.ArgumentParser(description=__doc__)\n    ap.add_argument(\"directory\", type=Path)\n    ap.add_argument(\"--daily\", type=int, default=7)\n    ap.add_argument(\"--weekly\", type=int, default=4)\n    ap.add_argument(\"--monthly\", type=int, default=6)\n    ap.add_argument(\"-n\", \"--dry-run\", action=\"store_true\")\n    a = ap.parse_args()\n    failed = 0\n    for prefix, items in sorted(snapshots(a.directory).items()):\n        kept = kept_days([d for d, _ in items], a.daily, a.weekly, a.monthly)\n        for d, p in sorted(items):\n            if d in kept:\n                continue\n            print((\"would delete \" if a.dry_run else \"delete \") + p.name)\n            if not a.dry_run:\n                try:\n                    p.unlink()\n                except OSError as e:\n                    print(f\"failed: {p.name}: {e}\", file=sys.stderr)\n                    failed += 1\n    sys.exit(1 if failed else 0)\n\n\nif __name__ == \"__main__\":\n    main()\n"
+  },
+  "check": "test -s README.md",
+  "git": true,
+  "followup": null
+ },
+ {
+  "id": "d_bench_report",
+  "user": "results/ 里是 slab 分配器这轮压测，整理成一份 analysis.md，周四组会上我要拿它讲。",
+  "files": {
+   "results/kvbench.csv": "variant,threads,ops_per_sec,p50_us,p99_us\nbaseline,1,1820000,0.52,2.1\nbaseline,4,6210000,0.61,3.4\nbaseline,16,9800000,1.3,11.8\nbaseline,64,8900000,5.9,48.0\nslab,1,1750000,0.55,2.3\nslab,4,6400000,0.60,3.1\nslab,16,14200000,0.98,6.2\nslab,64,16100000,3.4,14.5\n",
+   "results/notes.txt": "机器：2×Xeon Gold 6430（64 核），关超线程，内核 6.8，glibc 2.39\n负载：kvbench --mix 90/10 --keys 10M --value 128，每个点跑 1 轮 30 秒，前 5 秒预热不计\nbaseline = master 4be1e07；slab = 分支 slab-alloc 3f2a1c0（每线程一个 slab 缓存，空闲块按 size class 放本地链表，满 64 个还给全局池）\nperf.txt 是 64 线程时两边的 perf top 前几行\n",
+   "results/perf.txt": "# baseline, 64 threads\n  38.2%  libc.so.6   [.] pthread_mutex_lock\n  14.9%  kvbench     [.] hash_lookup\n   9.7%  libc.so.6   [.] _int_malloc\n   6.1%  libc.so.6   [.] _int_free\n# slab, 64 threads\n  27.4%  kvbench     [.] hash_lookup\n  11.2%  kvbench     [.] slab_alloc\n   8.8%  kvbench     [.] value_copy\n   4.0%  libc.so.6   [.] pthread_mutex_lock\n"
+  },
+  "check": "test -s analysis.md",
+  "git": true,
+  "followup": null
+ },
+ {
+  "id": "d_checklist",
+  "user": "把 receipts/ 里成都站的票据整理成一份报销清单，写到 报销清单.md，要交给学院财务。",
+  "files": {
+   "receipts/index.json": "{\n \"trip\": \"2026 西南邀请赛（成都站），11 月 6 日到 9 日，报销人：张伟、李娜、王磊\",\n \"items\": [\n  {\n   \"kind\": \"住宿发票\",\n   \"person\": \"张伟\",\n   \"seller\": \"锦江之星成都春熙路店\",\n   \"stay\": \"2026-11-06 至 2026-11-09\",\n   \"invoice_no\": \"26512000004995710001\",\n   \"amount\": 612.0,\n   \"file\": \"hotel/张伟_发票.pdf\"\n  },\n  {\n   \"kind\": \"结账单\",\n   \"person\": \"张伟\",\n   \"seller\": \"锦江之星成都春熙路店\",\n   \"amount\": 612.0,\n   \"file\": \"hotel/张伟_结账单.pdf\"\n  },\n  {\n   \"kind\": \"住宿发票\",\n   \"person\": \"李娜\",\n   \"seller\": \"锦江之星成都春熙路店\",\n   \"stay\": \"2026-11-06 至 2026-11-09\",\n   \"invoice_no\": \"26512000004995710002\",\n   \"amount\": 612.0,\n   \"file\": \"hotel/李娜_发票.pdf\"\n  },\n  {\n   \"kind\": \"结账单\",\n   \"person\": \"李娜\",\n   \"seller\": \"锦江之星成都春熙路店\",\n   \"amount\": 612.0,\n   \"file\": \"hotel/李娜_结账单.pdf\"\n  },\n  {\n   \"kind\": \"住宿发票\",\n   \"person\": \"王磊\",\n   \"seller\": \"锦江之星成都春熙路店\",\n   \"stay\": \"2026-11-06 至 2026-11-09\",\n   \"invoice_no\": \"26512000004995710003\",\n   \"amount\": 612.0,\n   \"file\": \"hotel/王磊_发票.pdf\"\n  },\n  {\n   \"kind\": \"结账单\",\n   \"person\": \"王磊\",\n   \"seller\": \"锦江之星成都春熙路店\",\n   \"amount\": 612.0,\n   \"file\": \"hotel/王磊_结账单.pdf\"\n  },\n  {\n   \"kind\": \"报名费发票\",\n   \"person\": \"张伟\",\n   \"seller\": \"西南邀请赛组委会\",\n   \"invoice_no\": \"26510000001234560001\",\n   \"amount\": 900.0,\n   \"note\": \"三人一队，一张发票\",\n   \"file\": \"fee/报名费.pdf\"\n  }\n ]\n}\n",
+   "receipts/fetch.log": "2026-11-12 21:03 搜索邮件 \"锦江之星\" -> 6 封，下载 6 个附件\n2026-11-12 21:05 搜索邮件 \"邀请赛 报名费\" -> 1 封，下载 1 个附件\n2026-11-12 21:06 搜索邮件 \"12306\" -> 超时（60 秒）\n2026-11-12 21:08 搜索邮件 \"12306\" -> 超时（60 秒）\n2026-11-12 21:09 邮件客户端无响应，停止\n",
+   "receipts/hotel/张伟_发票.pdf": "%PDF-1.4\n",
+   "receipts/hotel/张伟_结账单.pdf": "%PDF-1.4\n",
+   "receipts/hotel/李娜_发票.pdf": "%PDF-1.4\n",
+   "receipts/hotel/李娜_结账单.pdf": "%PDF-1.4\n",
+   "receipts/hotel/王磊_发票.pdf": "%PDF-1.4\n",
+   "receipts/hotel/王磊_结账单.pdf": "%PDF-1.4\n",
+   "receipts/fee/报名费.pdf": "%PDF-1.4\n"
+  },
+  "check": "test -s 报销清单.md",
+  "git": true,
+  "followup": null
+ },
+ {
+  "id": "d_readme_update",
+  "user": "freeze.py 刚加上冻结补偿：前台系统里会员冻结的天数会自动加到他的付费周期上。把 README 里续期那节补上这部分，店员会看。",
+  "files": {
+   "README.md": "# 会员续费机器人\n\n店员在群里发命令，机器人记会员的付费周期，月底按周期出对账单。\n\n## 命令\n\n- `/member add <手机号> <姓名>`：登记会员。\n- `/period list <会员>`：列出这个会员的全部付费周期。\n- `/period extend <会员> <天数>`：手动把最后一期往后延。\n\n## 续期\n\n`/renew <会员> auto <金额>` 从前台系统读这个会员现在的到期日，从上一期结束接着加一期，金额是店员填的。前台到期日没变就报“没有新的续期”。\n\n`/renew <会员> <天数> <金额>` 按天数手动加一期。\n\n## 对账单\n\n每月 1 号早上 9 点把上个月的周期和金额发到群里。\n",
+   "freeze.py": "\"\"\"Apply membership freeze days reported by the front-desk system to paid membership periods.\"\"\"\nfrom datetime import timedelta\n\n\ndef apply_freezes(db, member_id, reports):\n    # Reports are cumulative and newest first: the same freeze_id shows up again with more days\n    # each time the freeze is extended, and once more when the member comes back.\n    latest = {}\n    for r in reports:\n        latest.setdefault(r[\"freeze_id\"], r)\n    for freeze_id, r in latest.items():\n        delta = r[\"days\"] - db.applied_days(member_id, freeze_id)\n        if delta <= 0:\n            continue\n        period = db.period_containing(member_id, r[\"since\"])\n        if period is None:  # freeze started before any recorded period; applied once that period is entered\n            db.save_pending(member_id, freeze_id, r[\"since\"], r[\"days\"])\n            continue\n        db.shift_from(member_id, period.id, timedelta(days=delta))  # extend this period, push later ones back\n        db.record_applied(member_id, freeze_id, period.id, r[\"days\"])\n    db.commit()\n\n\ndef sync(desk, db, member_id):\n    reports, page = [], 0\n    while True:\n        batch = desk.freeze_reports(member_id, page)  # raises on HTTP errors, before anything is written\n        if not batch:\n            break\n        reports += batch\n        page += 1\n    apply_freezes(db, member_id, reports)\n",
+   "renew.py": "\"\"\"/renew <member> auto <price>: add a paid period that ends at the expiry the front-desk system reports.\"\"\"\nfrom datetime import timedelta\n\nimport freeze\n\n\ndef renew_auto(desk, db, member_id, price):\n    freeze.sync(desk, db, member_id)  # freezes first, so their days are not mistaken for a renewal\n    expiry = desk.expiry(member_id)\n    last = db.last_period(member_id)\n    if last is not None and expiry <= last.end:\n        raise ValueError(\"没有新的续期\")\n    start = last.end if last is not None else expiry - timedelta(days=30)\n    return db.add_period(member_id, start, expiry, price)\n\n\ndef renew_days(db, member_id, days, price):\n    last = db.last_period(member_id)\n    return db.add_period(member_id, last.end, last.end + timedelta(days=days), price)\n"
+  },
+  "check": "grep -q 冻结 README.md",
+  "git": true,
+  "followup": null
  }
 ]
